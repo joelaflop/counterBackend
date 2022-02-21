@@ -1,12 +1,12 @@
+import asyncio
+import aiohttp
 import datetime
 
-# import aiohttp
 from aiohttp import ClientSession
-# from sqlalchemy.ext.asyncio import AsyncSession
-
-# import external
 
 import models
+import crud
+import database
 
 spotify_accounts_url = "https://accounts.spotify.com"
 spotify_api_url = "https://api.spotify.com"
@@ -39,5 +39,36 @@ async def currently_playing(http_session: ClientSession, oauth2: models.OAuth2):
         # todo handled other bad responses
         return await resp.json()
 
+
+async def update_listen(db, http_session, oauth2):  # TODO break into multiple functions
+    should_commit = False
+    if oauth2.expiry <= datetime.datetime.now(datetime.timezone.utc):
+        spotify_res = await token(http_session, oauth2)
+        oauth2.access_token = spotify_res['access_token']
+        oauth2.expiry = datetime.datetime.now() + datetime.timedelta(seconds=spotify_res['expires_in'])
+        db.add(oauth2)
+        should_commit = True
+    spotify_res = await currently_playing(http_session, oauth2)
+    if spotify_res is not None:
+        listen = models.Listen(spotify_res=spotify_res, user_id=oauth2.user_id)
+        prev_listen = await crud.get_prev_listen(db, oauth2)
+        if not listen.likely_the_same(prev_listen):
+            db.add(listen)
+            should_commit = True
+    if should_commit:
+        await db.commit()
+
+
+async def update_listens_loop():  # TODO doesn't belong here
+    async with database.session_factory() as db:
+        async with aiohttp.ClientSession() as http_session:
+            while True:
+                try:
+                    oauth2 = await crud.get_oauth2_by_user_id(db, 1)
+                    await update_listen(db, http_session, oauth2)
+                except Exception as e:
+                    print(e)
+                finally:
+                    await asyncio.sleep(30)
 
 __all__ = ['token', 'currently_playing']
