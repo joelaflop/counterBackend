@@ -1,0 +1,5 @@
+import os
+
+DEBUG = False
+
+DATABASE_CONNECTION_STRING = os.environ['DATABASE_CONNECTION_STRING']
