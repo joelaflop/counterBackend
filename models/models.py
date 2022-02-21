@@ -92,4 +92,5 @@ class Listen(Base):
         return other is not None \
                and self.user_id == other.user_id \
                and self.api_name == other.api_name \
-               and self.api_timestamp == other.api_timestamp
+               and (self.api_timestamp - other.api_timestamp) <= datetime.timedelta(seconds=30) \
+               and self.title == other.title and self.album == other.album and self.artists == other.artists

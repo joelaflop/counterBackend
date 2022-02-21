@@ -6,7 +6,7 @@ import routes
 
 app = FastAPI()
 
-app.include_router(routes.v1Router)
+app.include_router(routes.v1router)
 
 
 @app.on_event("startup")
