@@ -88,9 +88,9 @@ class Listen(Base):
         if spotify_res['item']['artists'] is not None:
             self.artists = ','.join([artist['name'] for artist in spotify_res['item']['artists']])
 
-    def likely_the_same(self, other):
-        return other is not None \
-               and self.user_id == other.user_id \
-               and self.api_name == other.api_name \
-               and (self.api_timestamp - other.api_timestamp) <= datetime.timedelta(seconds=30) \
-               and self.title == other.title and self.album == other.album and self.artists == other.artists
+    def likely_new_listen(self, other):
+        return other is None \
+               or self.user_id != other.user_id \
+               or self.api_name != other.api_name \
+               or (self.api_timestamp - other.api_timestamp) > datetime.timedelta(seconds=30) \
+               or self.title != other.title or self.album != other.album or self.artists != other.artists
