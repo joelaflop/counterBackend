@@ -1,6 +1,7 @@
 import asyncio
 import aiohttp
 import datetime
+from collections import namedtuple
 
 from aiohttp import ClientSession
 
@@ -12,10 +13,11 @@ spotify_accounts_url = "https://accounts.spotify.com"
 spotify_api_url = "https://api.spotify.com"
 spotify_client_idSecret_base64 = "MTNhYWY4OGQ2ZTUxNDRkMTlhZTYzOTY5Yzk3NmM4NjE6MjYzZjM3MmNlMDdjNGRhMjgxZjU5MzM1ZTEwNGNiN2M="
 
+
 # TODO close this session when done
 
 
-async def token(http_session: ClientSession, oauth2: models.OAuth2):
+async def token(db, http_session: ClientSession, oauth2: models.OAuth2):
     headers = {'Content-Type': 'application/x-www-form-urlencoded',
                'Authorization': 'Basic ' + spotify_client_idSecret_base64}
     async with http_session.post(spotify_accounts_url + "/api/token",
@@ -23,34 +25,38 @@ async def token(http_session: ClientSession, oauth2: models.OAuth2):
                                  data={'grant_type': 'refresh_token',
                                        'refresh_token': oauth2.refresh_token}) as resp:
         # todo handled bad responses
-        return await resp.json()
+        res = await resp.json()
+        oauth2.access_token = res['access_token']
+        oauth2.expiry = datetime.datetime.now(tz=datetime.timezone.utc) + datetime.timedelta(seconds=res['expires_in'])
+        db.add(oauth2)
 
 
-# TODO: handled 401 with helper function
-async def currently_playing(http_session: ClientSession, oauth2: models.OAuth2):
+spotify_currently_playing_helper_tuple = namedtuple("Res", ["status", "res"])
+
+
+async def currently_playing(db, http_session: ClientSession, oauth2: models.OAuth2) -> spotify_currently_playing_helper_tuple:
+    helper_res = await currently_playing_helper(http_session, oauth2)
+    if helper_res.status == 401:
+        await token(db, http_session, oauth2)
+    helper_res = await currently_playing_helper(http_session, oauth2)
+    return helper_res
+
+
+async def currently_playing_helper(http_session: ClientSession, oauth2: models.OAuth2) -> spotify_currently_playing_helper_tuple:
     headers = {'Content-Type': 'application/json',
                'Authorization': 'Bearer ' + oauth2.access_token}
-    async with http_session.get(spotify_api_url + '/v1/me/player/currently-playing',
-                                headers=headers) as resp:
-        if resp.status == 204:
-            return None
-        elif resp.status == 401:
-            pass
-        # todo handled other bad responses
-        return await resp.json()
+    async with http_session.get(spotify_api_url + '/v1/me/player/currently-playing',headers=headers) as resp:
+        return spotify_currently_playing_helper_tuple(200, await resp.json()) if resp.status == 200 else spotify_currently_playing_helper_tuple(resp.status, None)
 
 
-async def update_listen(db, http_session, oauth2):  # TODO break into multiple functions
+async def update_listen(db, http_session, oauth2):
     should_commit = False
     if oauth2.expiry <= datetime.datetime.now(tz=datetime.timezone.utc):
-        spotify_res = await token(http_session, oauth2)
-        oauth2.access_token = spotify_res['access_token']
-        oauth2.expiry = datetime.datetime.now() + datetime.timedelta(seconds=spotify_res['expires_in'])
-        db.add(oauth2)
+        await token(db, http_session, oauth2)
         should_commit = True
-    spotify_res = await currently_playing(http_session, oauth2)
-    if spotify_res is not None:
-        listen = models.Listen(spotify_res=spotify_res, user_id=oauth2.user_id)
+    currently_listening = await currently_playing(db, http_session, oauth2)
+    if currently_listening.status == 200:
+        listen = models.Listen(spotify_res=currently_listening.res, user_id=oauth2.user_id)
         prev_listen = await crud.get_prev_listen(db, oauth2)
         if listen.likely_new_listen(prev_listen):
             db.add(listen)
